@@ -37,9 +37,10 @@ MODEL_READY  = False
 
 try:
     os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+    import keras
+    from keras.models import load_model
+    from keras import backend as K
     import tensorflow as tf
-    from tensorflow.keras.models import load_model
-    from tensorflow.keras import backend as K
 
     def focal_loss(gamma=2.0, alpha=0.75):
         def loss_fn(y_true, y_pred):
