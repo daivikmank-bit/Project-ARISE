@@ -12,6 +12,10 @@ from flask import Flask, request, jsonify, render_template
 
 app = Flask(__name__)
 
+# ── Download model files from Google Drive if missing ──────────────────────
+from download_models import download_models
+download_models()
+
 # ── File paths (all in same dir as app.py) ─────────────────────────────────
 HERE         = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH   = os.path.join(HERE, "sepsis_bilstm_full.keras")
