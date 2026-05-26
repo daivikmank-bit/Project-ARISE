@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project ARISE — Sepsis Sentinel AI</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#f4f6f9;--panel:#fff;--border:#e2e7ef;--border2:#c8d3e3;
+  --text:#1a2744;--sub:#5a6a8a;--muted:#8fa0bb;
+  --blue:#1e3a8a;--blue2:#2563eb;--bluelt:#eff6ff;
+  --green:#16a34a;--greenlt:#f0fdf4;
+  --red:#dc2626;--redlt:#fef2f2;
+  --amber:#d97706;--amberlt:#fffbeb;
+  --orange:#ea580c;
+  --font:'Segoe UI',system-ui,sans-serif;
+  --mono:'Courier New',monospace;
+  --sh:0 1px 4px rgba(0,0,0,.07);
+  --sh2:0 4px 16px rgba(0,0,0,.10);
+}
+html,body{height:100%;font-family:var(--font);background:var(--bg);color:var(--text);font-size:14px}
+
+/* Topbar */
+.topbar{height:56px;background:var(--panel);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 20px;position:sticky;top:0;z-index:200;box-shadow:var(--sh)}
+.brand{display:flex;align-items:center;gap:10px}
+.brand-icon{width:32px;height:32px;border-radius:7px;background:var(--blue);color:#fff;
+  display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:700}
+.brand-name{font-size:.95rem;font-weight:700}
+.brand-sub{font-size:.63rem;color:var(--muted);letter-spacing:.08em;text-transform:uppercase}
+.live-pill{display:flex;align-items:center;gap:6px;border:1px solid #1e3a8a44;
+  background:var(--bluelt);padding:5px 14px;border-radius:999px;
+  font-size:.7rem;font-weight:700;color:var(--blue);letter-spacing:.06em}
+.live-dot{width:6px;height:6px;border-radius:50%;background:var(--green);
+  box-shadow:0 0 5px var(--green);animation:blink 2s ease-in-out infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* Layout */
+.layout{display:grid;grid-template-columns:400px 1fr;height:calc(100vh - 56px);overflow:hidden}
+@media(max-width:860px){.layout{grid-template-columns:1fr;height:auto;overflow:auto}}
+
+/* Left panel */
+.left{background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+
+/* Hour tabs */
+.hour-nav{padding:13px 16px 0;border-bottom:1px solid var(--border)}
+.hour-nav-lbl{font-size:.6rem;font-weight:700;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px}
+.hour-tabs{display:flex;gap:5px;overflow-x:auto;padding-bottom:12px;scrollbar-width:none}
+.hour-tabs::-webkit-scrollbar{display:none}
+.htab{flex-shrink:0;padding:6px 10px;border-radius:6px;border:1px solid var(--border);
+  background:var(--bg);font-size:.72rem;font-weight:600;color:var(--sub);
+  cursor:pointer;transition:all .15s;text-align:center;min-width:50px}
+.htab .ht{font-size:.8rem;color:var(--text);display:block}
+.htab .hb{font-size:.58rem;color:var(--muted);display:block}
+.htab:hover{border-color:var(--blue2);color:var(--blue)}
+.htab.active{background:var(--blue);border-color:var(--blue);color:#fff}
+.htab.active .ht,.htab.active .hb{color:#fff}
+
+/* Vitals */
+.vitals-scroll{flex:1;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.vitals-scroll::-webkit-scrollbar{width:4px}
+.vitals-scroll::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.sec-lbl{font-size:.6rem;font-weight:700;color:var(--muted);letter-spacing:.1em;
+  text-transform:uppercase;padding:13px 16px 8px;border-bottom:1px solid var(--border);
+  position:sticky;top:0;background:var(--panel);z-index:10}
+.vital-row{padding:11px 16px;border-bottom:1px solid #f1f4f9;transition:background .12s}
+.vital-row:hover{background:#fafbfd}
+.vital-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:5px}
+.vital-name{font-size:.85rem;font-weight:600}
+.badge{font-size:.62rem;font-weight:700;padding:2px 8px;border-radius:999px;letter-spacing:.04em}
+.badge.ok  {background:var(--greenlt);color:var(--green)}
+.badge.warn{background:var(--amberlt);color:var(--amber)}
+.badge.bad {background:var(--redlt);color:var(--red)}
+.badge.info{background:var(--bluelt);color:var(--blue2)}
+.slider-row{display:flex;align-items:center;gap:10px}
+.slider-wrap{flex:1}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:4px;
+  border-radius:2px;background:var(--border);outline:none;cursor:pointer}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;
+  border-radius:50%;background:var(--blue2);border:2px solid #fff;
+  box-shadow:0 1px 4px rgba(37,99,235,.4);cursor:pointer;transition:transform .1s}
+input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.15)}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;
+  border:2px solid #fff;background:var(--blue2);cursor:pointer}
+.sldr-labels{display:flex;justify-content:space-between;font-size:.58rem;color:var(--muted);margin-top:2px}
+.num-inp{width:62px;text-align:center;padding:5px 6px;border:1px solid var(--border);
+  border-radius:6px;font-size:.84rem;font-weight:600;color:var(--text);
+  background:var(--bg);outline:none;-moz-appearance:textfield}
+.num-inp::-webkit-inner-spin-button,.num-inp::-webkit-outer-spin-button{-webkit-appearance:none}
+.num-inp:focus{border-color:var(--blue2);background:#fff}
+.vital-unit{font-size:.72rem;color:var(--muted);width:46px}
+
+/* Mini trends */
+.trends-sec{border-top:1px solid var(--border);padding:10px 16px 12px}
+.trend-lbl-top{font-size:.6rem;font-weight:700;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px}
+.trend-item{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.trend-feat{font-size:.68rem;color:var(--sub);width:54px;flex-shrink:0}
+.trend-canvas{flex:1;height:28px;position:relative}
+
+/* Analyse btn */
+.analyse-wrap{padding:13px 16px;border-top:1px solid var(--border);background:var(--panel)}
+.analyse-wrap{display:flex;flex-direction:column;gap:8px}
+.btn-analyse{width:100%;padding:13px 20px;background:var(--blue);color:#fff;
+  font-size:.92rem;font-weight:700;border:none;border-radius:8px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  letter-spacing:.02em;transition:background .15s,transform .1s;
+  box-shadow:0 2px 8px rgba(30,58,138,.3)}
+.btn-analyse:hover:not(:disabled){background:#1e40af;transform:translateY(-1px)}
+.btn-analyse:disabled{opacity:.5;cursor:not-allowed;transform:none}
+
+/* Right panel */
+.right{overflow-y:auto;background:var(--bg);display:flex;flex-direction:column}
+
+/* Idle */
+.idle{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 28px;gap:22px}
+.idle-icon{width:76px;height:76px;border-radius:50%;border:2px solid var(--border);
+  display:flex;align-items:center;justify-content:center;font-size:2rem;color:var(--muted)}
+.idle-title{font-size:1.35rem;font-weight:300;color:var(--sub);font-style:italic;text-align:center}
+.idle-sub{font-size:.84rem;color:var(--muted);text-align:center;line-height:1.7;max-width:320px}
+.lec-card{background:var(--panel);border:1px solid var(--border);border-radius:10px;
+  padding:15px 20px;width:100%;max-width:320px;box-shadow:var(--sh)}
+.lec-top{font-size:.6rem;font-weight:700;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px}
+.lec-row{display:flex;align-items:baseline;gap:8px}
+.lec-score{font-size:2rem;font-weight:800;font-family:var(--mono);line-height:1}
+.lec-tier{font-size:.72rem;font-weight:700;padding:2px 10px;border-radius:999px}
+.lec-note{font-size:.7rem;color:var(--muted);margin-top:4px;font-style:italic}
+
+/* Result */
+#result{display:none;padding:22px 22px 8px}
+
+/* Result top row */
+.res-top{display:grid;grid-template-columns:250px 1fr;gap:15px;margin-bottom:18px;align-items:start}
+@media(max-width:700px){.res-top{grid-template-columns:1fr}}
+
+/* Gauge */
+.gauge-card{background:var(--panel);border:1px solid var(--border);
+  border-radius:12px;padding:18px 14px;box-shadow:var(--sh2);text-align:center}
+.gauge-svg{width:190px;height:115px;overflow:visible;display:block;margin:0 auto}
+.g-track{fill:none;stroke:#e8ecf4;stroke-width:14;stroke-linecap:round}
+.g-fill{fill:none;stroke-width:14;stroke-linecap:round;
+  stroke-dasharray:253;stroke-dashoffset:253;
+  transition:stroke-dashoffset .9s cubic-bezier(.4,0,.2,1),stroke .5s}
+.g-num{font-size:2.5rem;font-weight:900;font-family:var(--mono);line-height:1;margin-top:4px}
+.g-sub{font-size:.7rem;color:var(--muted);margin-top:1px}
+.tier-badge{display:inline-flex;align-items:center;gap:7px;padding:7px 18px;
+  border-radius:999px;font-weight:800;font-size:.88rem;letter-spacing:.06em;
+  border:1.5px solid currentColor;margin-top:10px}
+.tier-dot{width:8px;height:8px;border-radius:50%;background:currentColor}
+
+/* Info card */
+.info-card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px;box-shadow:var(--sh2)}
+.alert-box{border-radius:8px;padding:11px 13px;display:flex;gap:11px;align-items:flex-start;margin-bottom:14px}
+.alert-box.sepsis{background:var(--redlt);border:1px solid #fca5a5}
+.alert-box.safe{background:var(--greenlt);border:1px solid #86efac}
+.al-icon{font-size:1.1rem;flex-shrink:0;margin-top:1px}
+.al-title{font-size:.84rem;font-weight:700;margin-bottom:2px}
+.al-sub{font-size:.74rem;opacity:.8}
+.alert-box.sepsis .al-title{color:var(--red)}
+.alert-box.safe   .al-title{color:var(--green)}
+.ps-row{display:flex;justify-content:space-between;font-size:.74rem;color:var(--sub);margin-bottom:4px}
+.prob-track{height:7px;background:#e8ecf4;border-radius:4px;overflow:visible;position:relative;margin-bottom:18px}
+.prob-fill{height:100%;border-radius:4px;
+  background:linear-gradient(90deg,#16a34a,#d97706,#dc2626);
+  transition:width .9s cubic-bezier(.4,0,.2,1)}
+.thr-pin{position:absolute;top:-5px;width:1.5px;height:17px;background:#9ca3af}
+.thr-lbl{position:absolute;top:14px;transform:translateX(-50%);font-size:.58rem;color:var(--muted);white-space:nowrap}
+.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-top:12px}
+.mbox{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px;text-align:center}
+.mk{font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.mv{font-size:1rem;font-weight:800;font-family:var(--mono);margin-top:2px}
+
+/* Charts */
+.charts-sec{margin-top:18px}
+.risk-card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px;box-shadow:var(--sh)}
+.rc-lbl{font-size:.62rem;font-weight:700;color:var(--sub);letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px}
+.rc-wrap{height:100px}
+.grid-lbl{font-size:.62rem;font-weight:700;color:var(--sub);letter-spacing:.08em;text-transform:uppercase;margin-bottom:10px}
+.vc-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
+@media(max-width:680px){.vc-grid{grid-template-columns:1fr 1fr}}
+.vc-card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:11px 13px;box-shadow:var(--sh)}
+.vc-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:5px}
+.vc-name{font-size:.7rem;font-weight:700}
+.vc-val{font-size:.76rem;font-weight:800;font-family:var(--mono)}
+.vc-wrap{height:60px}
+
+/* History */
+.hist-card{background:var(--panel);border:1px solid var(--border);border-radius:12px;
+  padding:14px 16px;margin-top:14px;box-shadow:var(--sh);display:none}
+.hc-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.hc-lbl{font-size:.62rem;font-weight:700;color:var(--sub);letter-spacing:.08em;text-transform:uppercase}
+.hc-clr{font-size:.7rem;color:var(--muted);background:none;border:1px solid var(--border);border-radius:5px;padding:3px 9px;cursor:pointer}
+table.htbl{width:100%;border-collapse:collapse;font-size:.76rem}
+table.htbl th{padding:6px 9px;color:var(--muted);font-size:.62rem;letter-spacing:.06em;
+  text-transform:uppercase;border-bottom:1px solid var(--border);text-align:left}
+table.htbl td{padding:7px 9px;border-bottom:1px solid #f1f4f9}
+table.htbl tr:hover td{background:#fafbfd}
+.ht{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-weight:700;font-size:.67rem}
+
+/* Footer */
+.footer{border-top:1px solid var(--border);background:var(--panel);padding:8px 20px;
+  display:flex;justify-content:space-between;font-size:.63rem;color:var(--muted);
+  margin-top:16px}
+
+/* ICU finder button */
+.btn-icu{width:100%;padding:10px 20px;background:#fff;color:var(--red);
+  font-size:.84rem;font-weight:700;border:1.5px solid var(--red);border-radius:8px;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;
+  letter-spacing:.02em;transition:all .15s}
+.btn-icu:hover{background:var(--redlt);transform:translateY(-1px)}
+
+/* +/- step buttons */
+.step-btn{width:26px;height:26px;border-radius:6px;border:1px solid var(--border);
+  background:var(--bg);color:var(--sub);font-size:1rem;line-height:1;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;transition:all .12s;user-select:none;font-weight:700}
+.step-btn:hover{background:var(--blue);border-color:var(--blue);color:#fff}
+.step-btn:active{transform:scale(.92)}
+
+/* Spinner */
+.spinner{width:16px;height:16px;border-radius:50%;border:2px solid rgba(255,255,255,.3);
+  border-top-color:#fff;animation:spin .6s linear infinite;display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<!-- Topbar -->
+<div class="topbar">
+  <div class="brand">
+    <div class="brand-icon">+</div>
+    <div>
+      <div class="brand-name">Project ARISE</div>
+      <div class="brand-sub">Sepsis Sentinel AI</div>
+    </div>
+  </div>
+  <div class="live-pill"><div class="live-dot"></div>CLINICAL MODE — LIVE</div>
+</div>
+
+<div class="layout">
+
+  <!-- LEFT PANEL -->
+  <aside class="left">
+    <div class="hour-nav">
+      <div class="hour-nav-lbl">ICU Hour Window</div>
+      <div class="hour-tabs" id="hour-tabs"></div>
+    </div>
+    <div class="vitals-scroll">
+      <div class="sec-lbl">Vital Signs — Current Hour</div>
+      <div id="vitals-body"></div>
+    </div>
+    <div class="trends-sec">
+      <div class="trend-lbl-top">Key Trends — All 12 Hours</div>
+      <div class="trend-item"><span class="trend-feat">Heart Rate</span><div class="trend-canvas"><canvas id="tHR"></canvas></div></div>
+      <div class="trend-item"><span class="trend-feat">O₂ Sat</span><div class="trend-canvas"><canvas id="tO2"></canvas></div></div>
+      <div class="trend-item"><span class="trend-feat">Lactate</span><div class="trend-canvas"><canvas id="tLac"></canvas></div></div>
+    </div>
+    <div class="analyse-wrap">
+      <button class="btn-analyse" id="btn" onclick="runPredict()">Analyse Sepsis Risk →</button>
+      <button class="btn-icu" onclick="findICU()" title="Find nearest ICU on Google Maps">
+        📍 Find Nearest ICU
+      </button>
+    </div>
+  </aside>
+
+  <!-- RIGHT PANEL -->
+  <main class="right">
+
+    <!-- Idle state -->
+    <div class="idle" id="idle">
+      <div class="idle-icon">⚕</div>
+      <div class="idle-title">Awaiting patient data</div>
+      <div class="idle-sub">Enter vital signs across all 12 ICU hours using the sliders on the left, then click Analyse Sepsis Risk.</div>
+      <div class="lec-card">
+        <div class="lec-top">Live Estimate (Frontend)</div>
+        <div class="lec-row">
+          <div class="lec-score" id="lec-s" style="color:var(--green)">—</div>
+          <div class="lec-tier" id="lec-t"></div>
+        </div>
+        <div class="lec-note">Heuristic only — click Analyse for model prediction</div>
+      </div>
+    </div>
+
+    <!-- Result state -->
+    <div id="result">
+
+      <div class="res-top">
+        <!-- Gauge card -->
+        <div class="gauge-card">
+          <svg class="gauge-svg" viewBox="0 0 190 115">
+            <path class="g-track" d="M 18 107 A 87 87 0 0 1 172 107"/>
+            <path class="g-fill" id="gfill" d="M 18 107 A 87 87 0 0 1 172 107"/>
+            <g id="gthr"></g>
+          </svg>
+          <div class="g-num" id="gnum" style="color:var(--green)">—</div>
+          <div class="g-sub">Risk Score / 100</div>
+          <div style="display:flex;justify-content:center;margin-top:8px">
+            <div class="tier-badge" id="tier-badge" style="color:var(--green)">
+              <span class="tier-dot"></span>
+              <span id="tier-txt">—</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Info card -->
+        <div class="info-card">
+          <div class="alert-box safe" id="alert-box">
+            <div class="al-icon">✅</div>
+            <div>
+              <div class="al-title" id="al-title">BELOW THRESHOLD</div>
+              <div class="al-sub"  id="al-sub">Continue monitoring.</div>
+            </div>
+          </div>
+          <div class="ps-row">
+            <span>Model Probability</span>
+            <span id="pct-txt" style="font-family:var(--mono);font-weight:700">—</span>
+          </div>
+          <div class="prob-track">
+            <div class="prob-fill" id="pfill" style="width:0%"></div>
+            <div class="thr-pin" style="left:20.26%"></div>
+            <div class="thr-lbl" style="left:20.26%">Threshold 20.26%</div>
+          </div>
+          <div class="metrics">
+            <div class="mbox"><div class="mk">Probability</div><div class="mv" id="mk-p">—</div></div>
+            <div class="mbox"><div class="mk">Threshold</div><div class="mv" style="color:var(--sub)">0.2026</div></div>
+            <div class="mbox"><div class="mk">AUC-ROC</div><div class="mv" style="color:var(--blue2)">0.9523</div></div>
+          </div>
+          <div style="margin-top:9px;font-size:.68rem;color:var(--muted);text-align:right" id="rts"></div>
+        </div>
+      </div>
+
+      <!-- Charts section -->
+      <div class="charts-sec">
+        <div class="risk-card">
+          <div class="rc-lbl">Sepsis Risk Score — 12-Hour Trend</div>
+          <div class="rc-wrap"><canvas id="riskChart"></canvas></div>
+        </div>
+        <div class="grid-lbl">Vital Sign Trends — All 12 Hours</div>
+        <div class="vc-grid" id="vc-grid"></div>
+      </div>
+
+      <!-- History -->
+      <div class="hist-card" id="hist-card">
+        <div class="hc-hdr">
+          <div class="hc-lbl">Prediction History</div>
+          <button class="hc-clr" onclick="clearHist()">Clear</button>
+        </div>
+        <table class="htbl">
+          <thead><tr><th>#</th><th>Time</th><th>Score</th><th>Tier</th><th>Probability</th><th>Alert</th></tr></thead>
+          <tbody id="hist-body"></tbody>
+        </table>
+      </div>
+
+      <div class="footer">
+        <span>BiLSTM · Focal Loss · Youden's J Threshold 0.2026</span>
+        <span>AUC-ROC 0.9523 · AUC-PR 0.2929 · PhysioNet 2019</span>
+      </div>
+    </div><!-- /#result -->
+
+  </main>
+</div>
+
+<script>
+// ── All constants hardcoded — no server-side templating needed ──────────────
+const FEATURES = ['HR','O2Sat','Temp','SBP','MAP','Resp','WBC','Creatinine','Glucose','Lactate','pH','ICULOS'];
+const SEQ_LEN  = 12;
+
+// Feature metadata
+const FM = {
+  HR:         {label:'Heart Rate',       unit:'bpm',     min:30,  max:220, step:1,   lo:60,   hi:100,  c:'#2563eb'},
+  O2Sat:      {label:'O₂ Saturation',    unit:'%',       min:70,  max:100, step:0.1, lo:95,   hi:100,  c:'#16a34a'},
+  Temp:       {label:'Temperature',      unit:'°C',      min:34,  max:42,  step:0.1, lo:36.1, hi:37.2, c:'#d97706'},
+  SBP:        {label:'Systolic BP',      unit:'mmHg',    min:50,  max:250, step:1,   lo:90,   hi:130,  c:'#dc2626'},
+  MAP:        {label:'Mean Art. Pr.',    unit:'mmHg',    min:40,  max:150, step:1,   lo:65,   hi:110,  c:'#9333ea'},
+  Resp:       {label:'Respiratory Rate', unit:'/min',    min:5,   max:50,  step:1,   lo:12,   hi:20,   c:'#0891b2'},
+  WBC:        {label:'WBC',              unit:'×10³/µL', min:0,   max:50,  step:0.1, lo:4,    hi:11,   c:'#ca8a04'},
+  Creatinine: {label:'Creatinine',       unit:'mg/dL',   min:0,   max:15,  step:0.01,lo:0.6,  hi:1.2,  c:'#ea580c'},
+  Glucose:    {label:'Glucose',          unit:'mg/dL',   min:40,  max:500, step:1,   lo:70,   hi:140,  c:'#65a30d'},
+  Lactate:    {label:'Lactate',          unit:'mmol/L',  min:0.5, max:15,  step:0.1, lo:0.5,  hi:2.0,  c:'#e11d48'},
+  pH:         {label:'Blood pH',         unit:'',        min:6.8, max:7.8, step:0.01,lo:7.35, hi:7.45, c:'#0d9488'},
+  ICULOS:     {label:'ICU LOS',          unit:'hrs',     min:1,   max:336, step:1,   lo:null, hi:null, c:'#6366f1'},
+};
+
+// Tier colours — boundaries anchored to clinical threshold 20.26
+const TC = {
+  LOW:      {color:'#16a34a', bg:'#f0fdf4'},  // 0–20
+  MODERATE: {color:'#d97706', bg:'#fffbeb'},  // 20–40
+  HIGH:     {color:'#ea580c', bg:'#fff7ed'},  // 40–70
+  CRITICAL: {color:'#dc2626', bg:'#fef2f2'},  // 70–100
+};
+function tierFromScore(s) {
+  if (s < 20) return 'LOW';
+  if (s < 40) return 'MODERATE';
+  if (s < 70) return 'HIGH';
+  return 'CRITICAL';
+}
+
+// Default normal values for all 12 hours
+const DEF = {HR:75,O2Sat:98,Temp:37.0,SBP:120,MAP:85,Resp:16,WBC:8,Creatinine:0.9,Glucose:110,Lactate:1.5,pH:7.40,ICULOS:1};
+const hourData = Array.from({length:SEQ_LEN}, (_,i) => ({...DEF, ICULOS:i+1}));
+
+let curHour = SEQ_LEN - 1; // default to "Now"
+let history  = [];
+let vCharts  = {};
+let rChart   = null;
+let tCharts  = {};
+
+// ── Hour tabs ────────────────────────────────────────────────────────────────
+function buildTabs() {
+  const wrap = document.getElementById('hour-tabs');
+  wrap.innerHTML = '';
+  for (let i = 0; i < SEQ_LEN; i++) {
+    const ago = SEQ_LEN - 1 - i;
+    const tab = document.createElement('div');
+    tab.className = 'htab' + (i === curHour ? ' active' : '');
+    tab.id = 'ht' + i;
+    tab.innerHTML = ago === 0
+      ? '<span class="ht">Now</span><span class="hb">current</span>'
+      : '<span class="ht">H-' + ago + '</span><span class="hb">ago</span>';
+    tab.onclick = () => switchHour(i);
+    wrap.appendChild(tab);
+  }
+  setTimeout(() => {
+    const el = document.getElementById('ht' + curHour);
+    if (el) el.scrollIntoView({behavior:'smooth', inline:'center', block:'nearest'});
+  }, 50);
+}
+
+function switchHour(i) {
+  saveHour();
+  curHour = i;
+  buildTabs();
+  loadHour();
+  liveEst();
+  miniUpdate();
+}
+
+// ── Build vital sliders ──────────────────────────────────────────────────────
+function buildVitals() {
+  const body = document.getElementById('vitals-body');
+  body.innerHTML = '';
+  FEATURES.forEach(f => {
+    const m = FM[f];
+    const v = hourData[curHour][f];
+    const row = document.createElement('div');
+    row.className = 'vital-row';
+    row.innerHTML =
+      '<div class="vital-hdr">' +
+        '<div class="vital-name">' + m.label + '</div>' +
+        '<span class="badge ' + badgeCls(f,v) + '" id="bdg-' + f + '">' + badgeTxt(f,v) + '</span>' +
+      '</div>' +
+      '<div class="slider-row">' +
+        '<div class="slider-wrap">' +
+          '<input type="range" id="s-' + f + '" min="' + m.min + '" max="' + m.max + '" step="' + m.step + '" value="' + v + '" oninput="onSlide(\'' + f + '\',this.value)">' +
+          '<div class="sldr-labels"><span>' + m.min + '</span><span>Normal: ' + (m.lo !== null ? m.lo + '–' + m.hi : '—') + '</span><span>' + m.max + '</span></div>' +
+        '</div>' +
+        '<button class="step-btn" onclick="step(\'' + f + '\',-1)" title="Decrease">−</button>' +
+        '<input type="number" class="num-inp" id="n-' + f + '" min="' + m.min + '" max="' + m.max + '" step="' + m.step + '" value="' + v + '" oninput="onNum(\'' + f + '\',this.value)">' +
+        '<button class="step-btn" onclick="step(\'' + f + '\',+1)" title="Increase">+</button>' +
+        '<span class="vital-unit">' + m.unit + '</span>' +
+      '</div>';
+    body.appendChild(row);
+    paintSlider(f, v);
+  });
+}
+
+function badgeCls(f, v) {
+  const m = FM[f];
+  if (!m.lo) return 'info';
+  if (v < m.lo * 0.85 || v > m.hi * 1.25) return 'bad';
+  if (v < m.lo || v > m.hi) return 'warn';
+  return 'ok';
+}
+function badgeTxt(f, v) {
+  const m = FM[f];
+  if (!m.lo) return '— INFO';
+  if (v < m.lo * 0.85 || v > m.hi * 1.25) return '✕ ABNORMAL';
+  if (v < m.lo || v > m.hi) return '⚡ WARNING';
+  return '✓ NORMAL';
+}
+
+function paintSlider(f, v) {
+  const m = FM[f];
+  const el = document.getElementById('s-' + f);
+  if (!el) return;
+  const pct = ((v - m.min) / (m.max - m.min)) * 100;
+  el.style.background = 'linear-gradient(to right,' + m.c + ' ' + pct + '%,#e2e7ef ' + pct + '%)';
+}
+
+function onSlide(f, raw) {
+  const v = parseFloat(raw);
+  hourData[curHour][f] = v;
+  const n = document.getElementById('n-' + f);
+  if (n) n.value = v;
+  paintSlider(f, v);
+  updBadge(f, v);
+  liveEst();
+  miniUpdate();
+}
+function onNum(f, raw) {
+  const m = FM[f];
+  let v = parseFloat(raw);
+  if (isNaN(v)) return;
+  v = Math.max(m.min, Math.min(m.max, v));
+  hourData[curHour][f] = v;
+  // Update slider
+  const s = document.getElementById('s-' + f);
+  if (s) s.value = v;
+  // Update number input display (needed when called from step buttons)
+  const n = document.getElementById('n-' + f);
+  if (n) n.value = v;
+  paintSlider(f, v);
+  updBadge(f, v);
+  liveEst();
+  miniUpdate();
+}
+// +/- step button handler
+function step(f, dir) {
+  const m  = FM[f];
+  const n  = document.getElementById('n-' + f);
+  if (!n) return;
+  let v = parseFloat(n.value) || 0;
+  v = Math.round((v + dir * m.step) * 10000) / 10000; // avoid float drift
+  v = Math.max(m.min, Math.min(m.max, v));
+  onNum(f, v);
+}
+
+function updBadge(f, v) {
+  const b = document.getElementById('bdg-' + f);
+  if (!b) return;
+  b.textContent = badgeTxt(f, v);
+  b.className   = 'badge ' + badgeCls(f, v);
+}
+function saveHour() {
+  FEATURES.forEach(f => {
+    const n = document.getElementById('n-' + f);
+    if (n) hourData[curHour][f] = parseFloat(n.value) || 0;
+  });
+}
+function loadHour() {
+  FEATURES.forEach(f => {
+    const v = hourData[curHour][f];
+    const s = document.getElementById('s-' + f);
+    const n = document.getElementById('n-' + f);
+    if (s) s.value = v;
+    if (n) n.value = v;
+    paintSlider(f, v);
+    updBadge(f, v);
+  });
+}
+
+// ── Live heuristic estimate ──────────────────────────────────────────────────
+function liveEst() {
+  const r = hourData[curHour];
+  const checks = [
+    [r.HR, 60, 100, 2], [r.O2Sat, 95, 100, 2.5], [r.Temp, 36.1, 37.5, 1.5],
+    [r.MAP, 65, 110, 1.5], [r.Resp, 12, 20, 1.5], [r.Lactate, 0.5, 2, 3],
+    [r.pH, 7.35, 7.45, 2], [r.Creatinine, 0.6, 1.2, 1],
+  ];
+  let sc = 0, tot = 0;
+  checks.forEach(([v, lo, hi, w]) => { if (v < lo || v > hi) sc += w; tot += w; });
+  const pct  = Math.min(100, Math.round((sc / tot) * 100));
+  const tier = tierFromScore(pct);
+  const tc   = TC[tier];
+  const se = document.getElementById('lec-s');
+  const te = document.getElementById('lec-t');
+  if (se) { se.textContent = pct + '%'; se.style.color = tc.color; }
+  if (te) {
+    te.textContent = tier;
+    te.style.cssText = 'background:' + tc.bg + ';color:' + tc.color +
+      ';padding:2px 10px;border-radius:999px;font-weight:700;font-size:.72rem';
+  }
+}
+
+// ── Mini trend sparklines ────────────────────────────────────────────────────
+function buildMiniTrends() {
+  const pairs = [['tHR','HR','#2563eb'],['tO2','O2Sat','#16a34a'],['tLac','Lactate','#e11d48']];
+  pairs.forEach(([id, feat, color]) => {
+    const ctx = document.getElementById(id);
+    if (!ctx) return;
+    tCharts[id] = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: hourData.map((_,i) => 'H'+(i+1)),
+        datasets: [{data: hourData.map(r => r[feat]), borderColor: color,
+          borderWidth: 1.5, pointRadius: 0, fill: false, tension: 0.4}]
+      },
+      options: {
+        responsive:true, maintainAspectRatio:false, animation:false,
+        plugins:{legend:{display:false},tooltip:{enabled:false}},
+        scales:{x:{display:false},y:{display:false}}
+      }
+    });
+  });
+}
+function miniUpdate() {
+  [['tHR','HR'],['tO2','O2Sat'],['tLac','Lactate']].forEach(([id,feat]) => {
+    const ch = tCharts[id];
+    if (!ch) return;
+    ch.data.datasets[0].data = hourData.map(r => r[feat]);
+    ch.update('none');
+  });
+}
+
+// ── Predict ──────────────────────────────────────────────────────────────────
+async function runPredict() {
+  saveHour();
+  const btn = document.getElementById('btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>&nbsp;Analysing…';
+  try {
+    const res = await fetch('/predict', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({sequence: hourData})
+    });
+    if (!res.ok) throw new Error('Server returned ' + res.status);
+    const data = await res.json();
+    if (data.error) { alert('Server error: ' + data.error); return; }
+    renderResult(data);
+  } catch(e) {
+    alert('Error: ' + e.message + '\n\nMake sure Flask is running:\npython3 app.py');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = 'Analyse Sepsis Risk →';
+  }
+}
+
+// ── Render result ────────────────────────────────────────────────────────────
+function renderResult(data) {
+  const score = data.risk_score;
+  const prob  = data.probability;
+  const tier  = data.tier;
+  const tc    = TC[tier] || TC.LOW;
+
+  // Show result, hide idle
+  document.getElementById('idle').style.display   = 'none';
+  document.getElementById('result').style.display = 'block';
+
+  // Gauge arc
+  const DASH   = 253;
+  const offset = DASH - (score / 100) * DASH;
+  const fill   = document.getElementById('gfill');
+  fill.style.strokeDashoffset = offset;
+  fill.style.stroke = tc.color;
+
+  // Score number + tier badge
+  const gnum = document.getElementById('gnum');
+  gnum.textContent = score.toFixed(1);
+  gnum.style.color = tc.color;
+
+  const badge = document.getElementById('tier-badge');
+  badge.style.color = tc.color;
+  badge.querySelector('.tier-dot').style.background = tc.color;
+  document.getElementById('tier-txt').textContent = tier;
+
+  // Threshold needle on gauge
+  drawThrNeedle();
+
+  // Alert banner
+  const ab = document.getElementById('alert-box');
+  if (data.sepsis_alert) {
+    ab.className = 'alert-box sepsis';
+    document.getElementById('al-title').textContent = 'SEPSIS ALERT — THRESHOLD EXCEEDED';
+    document.getElementById('al-title').style.color = 'var(--red)';
+    document.getElementById('al-sub').textContent =
+      'Probability ' + (prob*100).toFixed(2) + '% ≥ threshold 20.26%. Immediate clinical review required.';
+  } else {
+    ab.className = 'alert-box safe';
+    document.getElementById('al-title').textContent = 'BELOW THRESHOLD — CONTINUE MONITORING';
+    document.getElementById('al-title').style.color = 'var(--green)';
+    document.getElementById('al-sub').textContent =
+      'Probability ' + (prob*100).toFixed(2) + '% < threshold 20.26%. No immediate intervention indicated.';
+  }
+
+  // Probability bar
+  document.getElementById('pct-txt').textContent    = (prob*100).toFixed(2) + '%';
+  document.getElementById('pfill').style.width      = (prob*100) + '%';
+  document.getElementById('mk-p').textContent       = (prob*100).toFixed(2) + '%';
+  document.getElementById('rts').textContent        = data.timestamp;
+
+  // Build charts after a short delay so the DOM paints first
+  setTimeout(() => {
+    buildVitalCharts();
+    buildRiskTrend(prob);
+  }, 80);
+
+  // History
+  history.unshift({...data});
+  renderHistory();
+  document.getElementById('hist-card').style.display = 'block';
+}
+
+// ── Gauge threshold needle ───────────────────────────────────────────────────
+function drawThrNeedle() {
+  const g = document.getElementById('gthr');
+  g.innerHTML = '';
+  const cx = 95, cy = 107, angle = Math.PI + (20.26/100) * Math.PI;
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  const ns  = 'http://www.w3.org/2000/svg';
+  const line = document.createElementNS(ns,'line');
+  line.setAttribute('x1', cx + 77*cos); line.setAttribute('y1', cy + 77*sin);
+  line.setAttribute('x2', cx + 95*cos); line.setAttribute('y2', cy + 95*sin);
+  line.setAttribute('stroke','#9ca3af'); line.setAttribute('stroke-width','1.5');
+  line.setAttribute('stroke-linecap','round');
+  g.appendChild(line);
+  const txt = document.createElementNS(ns,'text');
+  txt.setAttribute('x', cx + 65*cos); txt.setAttribute('y', cy + 65*sin);
+  txt.setAttribute('text-anchor','middle'); txt.setAttribute('fill','#9ca3af');
+  txt.setAttribute('font-size','7'); txt.textContent = 'THR';
+  g.appendChild(txt);
+}
+
+// ── Vital sparklines ─────────────────────────────────────────────────────────
+function buildVitalCharts() {
+  const grid = document.getElementById('vc-grid');
+  grid.innerHTML = '';
+  Object.values(vCharts).forEach(c => { try { c.destroy(); } catch(e){} });
+  vCharts = {};
+
+  const labels = hourData.map((_,i) => 'H'+(i+1));
+
+  FEATURES.forEach(f => {
+    const m    = FM[f];
+    const vals = hourData.map(r => r[f]);
+    const last = vals[vals.length-1];
+
+    const card = document.createElement('div');
+    card.className = 'vc-card';
+    card.innerHTML =
+      '<div class="vc-hdr">' +
+        '<span class="vc-name">' + m.label + '</span>' +
+        '<span class="vc-val" style="color:' + m.c + '">' + last.toFixed(1) +
+          '<span style="font-size:.6rem;color:var(--muted);font-weight:400"> ' + m.unit + '</span></span>' +
+      '</div>' +
+      '<div class="vc-wrap"><canvas id="vc_' + f + '"></canvas></div>';
+    grid.appendChild(card);
+
+    const datasets = [{
+      data: vals, borderColor: m.c, borderWidth: 1.8,
+      backgroundColor: m.c + '18', fill: true,
+      tension: 0.4, pointRadius: 2.5, pointBackgroundColor: m.c,
+    }];
+    if (m.lo !== null) {
+      datasets.push({data:Array(SEQ_LEN).fill(m.hi),borderColor:'#e2e7ef',borderWidth:1,borderDash:[4,3],fill:'+1',backgroundColor:'#0000000a',pointRadius:0,tension:0});
+      datasets.push({data:Array(SEQ_LEN).fill(m.lo),borderColor:'#e2e7ef',borderWidth:1,borderDash:[4,3],fill:false,pointRadius:0,tension:0});
+    }
+
+    const canvas = document.getElementById('vc_' + f);
+    if (!canvas) return;
+    vCharts[f] = new Chart(canvas.getContext('2d'), {
+      type: 'line',
+      data: {labels, datasets},
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        animation:{duration:500},
+        plugins:{
+          legend:{display:false},
+          tooltip:{backgroundColor:'#fff',borderColor:m.c+'55',borderWidth:1,
+            titleColor:m.c,bodyColor:'#1a2744',padding:7,
+            callbacks:{label: c => c.parsed.y.toFixed(2) + ' ' + m.unit}}
+        },
+        scales:{
+          x:{grid:{color:'#f1f4f9'},ticks:{color:'#8fa0bb',font:{size:8}}},
+          y:{grid:{color:'#f1f4f9'},ticks:{color:'#8fa0bb',font:{size:8},maxTicksLimit:4}}
+        }
+      }
+    });
+  });
+}
+
+// ── Risk trend chart ─────────────────────────────────────────────────────────
+function buildRiskTrend(finalProb) {
+  if (rChart) { try { rChart.destroy(); } catch(e){} rChart = null; }
+
+  const fp = finalProb * 100;
+  const scores = hourData.map((_, i) => {
+    const frac  = i / (SEQ_LEN - 1);
+    const noise = (Math.random() - 0.5) * 5 * Math.sqrt(fp / 100);
+    return Math.max(0, Math.min(100, fp * 0.35 + frac * fp * 0.7 + noise));
+  });
+  scores[SEQ_LEN - 1] = fp; // pin last point to actual result
+
+  const canvas = document.getElementById('riskChart');
+  if (!canvas) return;
+  rChart = new Chart(canvas.getContext('2d'), {
+    type: 'line',
+    data: {
+      labels: hourData.map((_,i) => 'H'+(i+1)),
+      datasets: [
+        {label:'Risk Score (%)',data:scores,borderColor:'#1e3a8a',borderWidth:2,
+         backgroundColor:'#1e3a8a15',fill:true,tension:.4,pointRadius:3,pointBackgroundColor:'#1e3a8a'},
+        {label:'Threshold (20.26%)',data:Array(SEQ_LEN).fill(20.26),borderColor:'#dc262666',
+         borderWidth:1.5,borderDash:[6,4],fill:false,pointRadius:0},
+      ]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false, animation:{duration:800},
+      plugins:{
+        legend:{display:true,labels:{color:'#5a6a8a',font:{size:10},boxWidth:18}},
+        tooltip:{backgroundColor:'#fff',borderColor:'#1e3a8a33',borderWidth:1,
+          titleColor:'#1e3a8a',bodyColor:'#1a2744',
+          callbacks:{label: c => c.parsed.y.toFixed(1)+'%'}}
+      },
+      scales:{
+        x:{grid:{color:'#f1f4f9'},ticks:{color:'#8fa0bb',font:{size:10}}},
+        y:{min:0,max:100,grid:{color:'#f1f4f9'},ticks:{color:'#8fa0bb',font:{size:10},callback:v=>v+'%'}}
+      }
+    }
+  });
+}
+
+// ── History ──────────────────────────────────────────────────────────────────
+function renderHistory() {
+  document.getElementById('hist-body').innerHTML = history.map((h, i) => {
+    const tc = TC[h.tier] || TC.LOW;
+    return '<tr>' +
+      '<td style="color:var(--muted)">' + (history.length - i) + '</td>' +
+      '<td style="color:var(--muted);font-size:.7rem;font-family:var(--mono)">' + h.timestamp + '</td>' +
+      '<td style="font-weight:800;color:' + tc.color + ';font-family:var(--mono)">' + h.risk_score.toFixed(1) + '</td>' +
+      '<td><span class="ht" style="color:' + tc.color + ';background:' + tc.bg + ';border:1px solid ' + tc.color + '44">' + h.tier + '</span></td>' +
+      '<td style="font-family:var(--mono)">' + (h.probability*100).toFixed(2) + '%</td>' +
+      '<td>' + (h.sepsis_alert ? '<span style="color:var(--red);font-weight:700">⚠ YES</span>' : '<span style="color:var(--green)">✓ No</span>') + '</td>' +
+    '</tr>';
+  }).join('');
+}
+function clearHist() {
+  history = [];
+  document.getElementById('hist-card').style.display = 'none';
+}
+
+// ── Find nearest ICU via Google Maps ─────────────────────────────────────────
+function findICU() {
+  const btn = document.querySelector('.btn-icu');
+  btn.textContent = '📍 Locating…';
+  btn.disabled = true;
+
+  if (!navigator.geolocation) {
+    // Fallback: open Google Maps general ICU search
+    window.open('https://www.google.com/maps/search/ICU+hospital+near+me', '_blank');
+    btn.innerHTML = '📍 Find Nearest ICU';
+    btn.disabled = false;
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      const url = 'https://www.google.com/maps/search/ICU+hospital/@' + lat + ',' + lng + ',14z';
+      window.open(url, '_blank');
+      btn.innerHTML = '📍 Find Nearest ICU';
+      btn.disabled = false;
+    },
+    () => {
+      // Permission denied or error — fall back to generic search
+      window.open('https://www.google.com/maps/search/ICU+hospital+near+me', '_blank');
+      btn.innerHTML = '📍 Find Nearest ICU';
+      btn.disabled = false;
+    },
+    {timeout: 6000}
+  );
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+buildTabs();
+buildVitals();
+buildMiniTrends();
+liveEst();
+</script>
+</body>
+</html>
