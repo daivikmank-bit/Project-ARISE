@@ -551,6 +551,24 @@ function loadHour() {
   });
 }
 
+// ── Heuristic probability (0–1) across all 12 hours ─────────────────────────
+function heuristicProb(seq) {
+  let total = 0, maxW = 0;
+  seq.forEach((r, i) => {
+    const w = 0.5 + 0.5 * (i / (seq.length - 1)); // recent hours weighted more
+    const checks = [
+      [r.HR, 60, 100, 2], [r.O2Sat, 95, 100, 2.5], [r.Temp, 36.1, 37.5, 1.5],
+      [r.MAP, 65, 110, 1.5], [r.Resp, 12, 20, 1.5], [r.Lactate, 0.5, 2, 3],
+      [r.pH, 7.35, 7.45, 2], [r.Creatinine, 0.6, 1.2, 1],
+    ];
+    let sc = 0, tot = 0;
+    checks.forEach(([v, lo, hi, cw]) => { if (v < lo || v > hi) sc += cw; tot += cw; });
+    total += w * (sc / tot);
+    maxW  += w;
+  });
+  return Math.min(0.99, total / maxW);
+}
+
 // ── Live heuristic estimate ──────────────────────────────────────────────────
 function liveEst() {
   const r = hourData[curHour];
@@ -610,22 +628,45 @@ async function runPredict() {
   const btn = document.getElementById('btn');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>&nbsp;Analysing…';
+  let usedAI = false;
+  let result = null;
   try {
     const res = await fetch('/predict', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({sequence: hourData})
+      body: JSON.stringify({sequence: hourData}),
+      signal: AbortSignal.timeout(6000)
     });
-    if (!res.ok) throw new Error('Server returned ' + res.status);
-    const data = await res.json();
-    if (data.error) { alert('Server error: ' + data.error); return; }
-    renderResult(data);
-  } catch(e) {
-    alert('Error: ' + e.message + '\n\nMake sure Flask is running:\npython3 app.py');
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = 'Analyse Sepsis Risk →';
+    if (res.ok) {
+      const data = await res.json();
+      if (!data.error) { result = data; usedAI = true; }
+    }
+  } catch(e) { /* model unavailable — fall through to heuristic */ }
+
+  if (!result) {
+    const prob = heuristicProb(hourData);
+    const score = Math.round(prob * 100 * 10) / 10;
+    result = {
+      probability: Math.round(prob * 10000) / 10000,
+      risk_score: score,
+      threshold: 0.2026,
+      sepsis_alert: prob >= 0.2026,
+      timestamp: new Date().toLocaleString(),
+      tier: tierFromScore(score),
+      mode: 'heuristic'
+    };
   }
+
+  const badge = document.getElementById('mode-badge');
+  if (badge) {
+    badge.style.display = 'inline-flex';
+    if (usedAI) { badge.className = 'mode-badge ai'; badge.textContent = '🧠 BiLSTM AI'; }
+    else        { badge.className = 'mode-badge heuristic'; badge.textContent = '📐 Heuristic'; }
+  }
+
+  renderResult(result);
+  btn.disabled = false;
+  btn.innerHTML = 'Analyse Sepsis Risk →';
 }
 
 // ── Render result ────────────────────────────────────────────────────────────
