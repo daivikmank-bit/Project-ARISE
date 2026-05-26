@@ -2,17 +2,13 @@
 Project ARISE — Sepsis Sentinel AI
 Flask backend · BiLSTM · PhysioNet 2019 (Salik Hussain Kaggle)
 All pkl / keras files sit in the SAME folder as this app.py
+Falls back gracefully if model files are not present.
 """
 
 import os, pickle
 import numpy as np
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template
-
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-import tensorflow as tf
-from tensorflow.keras.models import load_model
-from tensorflow.keras import backend as K
 
 app = Flask(__name__)
 
@@ -28,53 +24,67 @@ FEATURES = ["HR","O2Sat","Temp","SBP","MAP","Resp",
             "WBC","Creatinine","Glucose","Lactate","pH","ICULOS"]
 SEQ_LEN  = 12
 
-# ── Focal loss (required to load .keras model) ─────────────────────────────
-def focal_loss(gamma=2.0, alpha=0.75):
-    def loss_fn(y_true, y_pred):
-        y_pred  = K.clip(y_pred, K.epsilon(), 1. - K.epsilon())
-        bce     = -(y_true * K.log(y_pred) + (1-y_true) * K.log(1-y_pred))
-        p_t     = y_true * y_pred + (1-y_true) * (1-y_pred)
-        alpha_t = y_true * alpha  + (1-y_true) * (1-alpha)
-        return K.mean(alpha_t * K.pow(1.0 - p_t, gamma) * bce)
-    loss_fn.__name__ = "focal_loss"
-    return loss_fn
-
-# ── Load artefacts at startup ──────────────────────────────────────────────
-print("Loading model …", flush=True)
-model = load_model(MODEL_PATH, custom_objects={"focal_loss": focal_loss()})
-print("  ✓ Model loaded", flush=True)
-
-with open(SCALER_PATH, "rb") as f:
-    scaler = pickle.load(f)
-print("  ✓ Scaler loaded", flush=True)
-
-# Global medians (used for any zero / missing values as fallback)
+# ── Load artefacts at startup (optional — app works without them) ──────────
+model        = None
+scaler       = None
 global_medians = {}
-if os.path.exists(MEDIANS_PATH):
-    with open(MEDIANS_PATH, "rb") as f:
-        global_medians = pickle.load(f)
-    print("  ✓ Global medians loaded", flush=True)
+THRESHOLD    = 0.2026
+MODEL_READY  = False
 
-# Threshold from eval_meta (Youden's J = 0.2026 by default)
-THRESHOLD = 0.2026
-if os.path.exists(META_PATH):
-    with open(META_PATH, "rb") as f:
-        meta = pickle.load(f)
-    THRESHOLD = float(meta.get("threshold", THRESHOLD))
-    print(f"  ✓ Threshold from eval_meta: {THRESHOLD:.4f}", flush=True)
-else:
-    print(f"  ⚠  eval_meta.pkl not found — using default threshold {THRESHOLD}", flush=True)
+try:
+    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+    import tensorflow as tf
+    from tensorflow.keras.models import load_model
+    from tensorflow.keras import backend as K
+
+    def focal_loss(gamma=2.0, alpha=0.75):
+        def loss_fn(y_true, y_pred):
+            y_pred  = K.clip(y_pred, K.epsilon(), 1. - K.epsilon())
+            bce     = -(y_true * K.log(y_pred) + (1-y_true) * K.log(1-y_pred))
+            p_t     = y_true * y_pred + (1-y_true) * (1-y_pred)
+            alpha_t = y_true * alpha  + (1-y_true) * (1-alpha)
+            return K.mean(alpha_t * K.pow(1.0 - p_t, gamma) * bce)
+        loss_fn.__name__ = "focal_loss"
+        return loss_fn
+
+    if os.path.exists(MODEL_PATH) and os.path.exists(SCALER_PATH):
+        print("Loading model …", flush=True)
+        model = load_model(MODEL_PATH, custom_objects={"focal_loss": focal_loss()})
+        print("  ✓ Model loaded", flush=True)
+
+        with open(SCALER_PATH, "rb") as f:
+            scaler = pickle.load(f)
+        print("  ✓ Scaler loaded", flush=True)
+
+        if os.path.exists(MEDIANS_PATH):
+            with open(MEDIANS_PATH, "rb") as f:
+                global_medians = pickle.load(f)
+            print("  ✓ Global medians loaded", flush=True)
+
+        if os.path.exists(META_PATH):
+            with open(META_PATH, "rb") as f:
+                meta = pickle.load(f)
+            THRESHOLD = float(meta.get("threshold", THRESHOLD))
+            print(f"  ✓ Threshold from eval_meta: {THRESHOLD:.4f}", flush=True)
+
+        MODEL_READY = True
+        print("  ✓ BiLSTM model ready", flush=True)
+    else:
+        print("  ⚠  Model files not found — running in frontend-only mode", flush=True)
+
+except ImportError:
+    print("  ⚠  TensorFlow not installed — running in frontend-only mode", flush=True)
+except Exception as e:
+    print(f"  ⚠  Model load failed ({e}) — running in frontend-only mode", flush=True)
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 def score_to_tier(score):
-    # Boundaries anchored to clinical threshold at 20.26
     if   score < 20: return {"tier":"LOW",      "color":"#16a34a","bg":"#f0fdf4"}
     elif score < 40: return {"tier":"MODERATE",  "color":"#d97706","bg":"#fffbeb"}
     elif score < 70: return {"tier":"HIGH",      "color":"#ea580c","bg":"#fff7ed"}
     else:            return {"tier":"CRITICAL",  "color":"#dc2626","bg":"#fef2f2"}
 
 def impute_row(row):
-    """Replace 0 / NaN values with global training medians where available."""
     out = {}
     for f in FEATURES:
         v = row.get(f, 0.0)
@@ -84,11 +94,10 @@ def impute_row(row):
     return out
 
 def run_inference(sequence):
-    """sequence: list of SEQ_LEN dicts → prediction dict."""
     arr = np.array([[impute_row(r)[f] for f in FEATURES]
-                    for r in sequence], dtype=np.float32)   # (12, 12)
-    arr_scaled = scaler.transform(arr)                       # (12, 12)
-    X   = arr_scaled[np.newaxis, ...]                        # (1, 12, 12)
+                    for r in sequence], dtype=np.float32)
+    arr_scaled = scaler.transform(arr)
+    X   = arr_scaled[np.newaxis, ...]
     prob  = float(model.predict(X, verbose=0)[0][0])
     score = round(prob * 100, 1)
     result = {
@@ -111,14 +120,14 @@ def index():
 
 @app.route("/health")
 def health():
-    return jsonify({"status":"ok", "threshold": THRESHOLD, "features": FEATURES})
+    return jsonify({"status":"ok", "model_ready": MODEL_READY,
+                    "threshold": THRESHOLD, "features": FEATURES})
 
 @app.route("/predict", methods=["POST"])
 def predict():
-    """
-    Body: { "sequence": [ {HR:…, O2Sat:…, … }, … ] }   (12 rows)
-    Rows are padded / trimmed to exactly SEQ_LEN automatically.
-    """
+    if not MODEL_READY:
+        return jsonify({"error": "Model not loaded — use heuristic mode."}), 503
+
     try:
         data = request.get_json(force=True)
         if not data or "sequence" not in data:
@@ -128,7 +137,6 @@ def predict():
         if not isinstance(seq, list) or len(seq) == 0:
             return jsonify({"error": "'sequence' must be a non-empty list."}), 400
 
-        # Validate + coerce
         for i, row in enumerate(seq):
             for f in FEATURES:
                 try:
@@ -136,7 +144,6 @@ def predict():
                 except (ValueError, TypeError):
                     return jsonify({"error": f"Row {i} feature '{f}' not numeric."}), 400
 
-        # Pad at front if too short; trim at front if too long
         if len(seq) < SEQ_LEN:
             pad = [seq[0].copy() for _ in range(SEQ_LEN - len(seq))]
             seq = pad + seq
@@ -149,7 +156,9 @@ def predict():
 
 @app.route("/predict/single", methods=["POST"])
 def predict_single():
-    """Single-row snapshot — row is repeated SEQ_LEN times."""
+    if not MODEL_READY:
+        return jsonify({"error": "Model not loaded — use heuristic mode."}), 503
+
     try:
         row = request.get_json(force=True)
         if not row:
@@ -187,4 +196,4 @@ def features():
 # ══════════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     print(f"\n🩺  Project ARISE — Sepsis Sentinel running at http://127.0.0.1:5000\n")
-    app.run(debug=False, host="0.0.0.0", port=5000)
+    app.run(debug=False, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
